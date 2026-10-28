@@ -1,9 +1,7 @@
 -- =============================================================================
 -- SyncNote: Complete 1-Click Database Setup & Seed
--- Target Project: https://nrdjarmwgrxbjfpxysuk.supabase.co
--- Instructions: Copy and paste this entire script into your Supabase SQL Editor:
--- https://supabase.com/dashboard/project/nrdjarmwgrxbjfpxysuk/sql/new
--- Then click "Run".
+-- Open the SQL Editor for the same Supabase project configured by
+-- VITE_SUPABASE_URL, paste this entire script, and click "Run".
 -- =============================================================================
 
 -- Enable UUID extension
@@ -44,6 +42,35 @@ CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.
 
 DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
 CREATE POLICY "Users can insert own profile" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- Automatically create or update profile when a user registers in auth.users
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, enrollment_no, course_branch, current_semester, created_at, updated_at)
+  VALUES (
+    new.id,
+    COALESCE(new.raw_user_meta_data->>'full_name', 'Student'),
+    COALESCE(new.raw_user_meta_data->>'enrollment_no', 'STU-' || substr(new.id::text, 1, 8)),
+    COALESCE(new.raw_user_meta_data->>'course_branch', 'B.Tech CSE'),
+    COALESCE((new.raw_user_meta_data->>'current_semester')::int, 1),
+    NOW(),
+    NOW()
+  )
+  ON CONFLICT (id) DO UPDATE
+  SET full_name = CASE WHEN EXCLUDED.full_name IS NOT NULL AND EXCLUDED.full_name <> '' THEN EXCLUDED.full_name ELSE profiles.full_name END,
+      enrollment_no = CASE WHEN profiles.enrollment_no LIKE 'STU-%' AND EXCLUDED.enrollment_no NOT LIKE 'STU-%' THEN EXCLUDED.enrollment_no ELSE profiles.enrollment_no END,
+      course_branch = CASE WHEN EXCLUDED.course_branch IS NOT NULL AND EXCLUDED.course_branch <> '' THEN EXCLUDED.course_branch ELSE profiles.course_branch END,
+      current_semester = COALESCE(EXCLUDED.current_semester, profiles.current_semester),
+      updated_at = NOW();
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ─── 2. Subjects Table ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS subjects (

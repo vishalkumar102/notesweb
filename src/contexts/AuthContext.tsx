@@ -159,10 +159,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single()
-      if (!error && data) {
-        setProfile(data as Profile)
+        .limit(1)
+
+      const profileRow = data && data.length > 0 ? (data[0] as Profile) : null
+
+      if (!error && profileRow) {
+        setProfile(profileRow)
         return
+      }
+
+      // If user is logged into Supabase Auth but profile row is missing, create it automatically
+      if (!error && !profileRow) {
+        const { data: authData } = await supabase.auth.getUser()
+        if (authData?.user) {
+          const meta = authData.user.user_metadata || {}
+          const newProfile: Profile = {
+            id: userId,
+            full_name: meta.full_name || authData.user.email?.split('@')[0] || 'Student',
+            enrollment_no: meta.enrollment_no || 'STU-' + userId.substring(0, 8),
+            course_branch: meta.course_branch || 'B.Tech CSE',
+            current_semester: meta.current_semester || 1,
+            avatar_url: '',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+          const { error: insertErr } = await supabase
+            .from('profiles')
+            .upsert(newProfile, { onConflict: 'id' })
+
+          if (!insertErr) {
+            setProfile(newProfile)
+            return
+          }
+        }
       }
     } catch {
       // Supabase fetch failed
@@ -217,11 +246,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signUp(email: string, password: string, profileData: Partial<Profile>): Promise<{ error: Error | null }> {
+    const cleanEmail = email.trim().toLowerCase()
+
     // 1. Try Supabase if configured
     if (isSupabaseConfigured) {
       try {
-        const { data, error } = await supabase.auth.signUp({ email, password })
-        if (error) throw error
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: {
+            data: {
+              full_name: profileData.full_name || 'Student',
+              enrollment_no: profileData.enrollment_no || '',
+              course_branch: profileData.course_branch || 'B.Tech CSE',
+              current_semester: profileData.current_semester || 1,
+            },
+          },
+        })
+
+        if (error) {
+          console.error('Supabase signup error:', error)
+          return { error }
+        }
+
         if (data.user) {
           const newProfile: Profile = {
             id: data.user.id,
@@ -233,23 +280,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }
-          await supabase.from('profiles').insert(newProfile)
+
+          // Best-effort profile upsert from client side
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .upsert(newProfile, { onConflict: 'id' })
+
+          if (profileError) {
+            console.warn('Profile client upsert note (handled by database trigger or pending email confirmation):', profileError.message)
+          }
+
           setProfile(newProfile)
           return { error: null }
         }
       } catch (err: any) {
-        console.warn('Supabase signup error, continuing with local registration fallback:', err)
-        // If Supabase returned a valid user error like already registered, return it
-        if (err.message && err.message.toLowerCase().includes('already registered')) {
-          return { error: err }
-        }
+        console.error('Supabase signup error:', err)
+        return { error: err instanceof Error ? err : new Error(String(err)) }
       }
     }
 
-    // 2. Local registration fallback
+    // 2. Local registration fallback ONLY if Supabase is not configured
     try {
       const users = getLocalUsers()
-      const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase())
+      const existing = users.find(u => u.email.toLowerCase() === cleanEmail)
       if (existing) {
         return { error: new Error('An account with this email already exists.') }
       }
@@ -267,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const newAccount: LocalStoredAccount = {
-        email: email.trim().toLowerCase(),
+        email: cleanEmail,
         passwordHash: password,
         profile: newProfile,
       }
@@ -284,17 +337,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn(email: string, password: string): Promise<{ error: Error | null }> {
     const cleanEmail = email.trim().toLowerCase()
 
+    // Demo account shortcut
+    if (cleanEmail === 'alex.21cs@university.edu' || cleanEmail === 'demo@syncnote.edu') {
+      const demoAccount = DEFAULT_DEMO_USERS[0]
+      setLocalAuthSession(demoAccount)
+      return { error: null }
+    }
+
     // 1. Try Supabase if configured
     if (isSupabaseConfigured) {
       try {
         const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
         if (!error) return { error: null }
-      } catch (e) {
-        console.warn('Supabase sign in failed, checking local credentials', e)
+        return { error }
+      } catch (e: any) {
+        console.warn('Supabase sign in failed:', e)
+        return { error: e instanceof Error ? e : new Error(String(e)) }
       }
     }
 
-    // 2. Local fallback sign in
+    // 2. Local fallback sign in only when Supabase is not configured
     const users = getLocalUsers()
     const found = users.find(u => u.email.toLowerCase() === cleanEmail)
     if (found) {
@@ -303,13 +365,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: null }
       }
       return { error: new Error('Invalid email or password.') }
-    }
-
-    // Check demo accounts tolerance
-    if (cleanEmail === 'alex.21cs@university.edu' || cleanEmail === 'demo@syncnote.edu') {
-      const demoAccount = DEFAULT_DEMO_USERS[0]
-      setLocalAuthSession(demoAccount)
-      return { error: null }
     }
 
     return { error: new Error('Account not found. Please create an account first.') }
