@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { supabase, isSupabaseConfigured } from '@/lib/supabase'
 import type { User, Session } from '@/lib/supabase'
 import type { Profile } from '@/types'
+import { syncUserBookmarksWithSupabase } from '@/lib/bookmarks'
 
 interface AuthContextType {
   user: User | null
@@ -100,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setSession(session)
             setUser(session.user)
             await fetchProfile(session.user.id)
+            void syncUserBookmarksWithSupabase()
             setLoading(false)
             return
           }
@@ -137,6 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(session?.user ?? null)
         if (session?.user) {
           await fetchProfile(session.user.id)
+          void syncUserBookmarksWithSupabase()
         } else {
           setProfile(null)
           setLoading(false)
@@ -348,7 +351,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isSupabaseConfigured) {
       try {
         const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
-        if (!error) return { error: null }
+        if (!error) {
+          void syncUserBookmarksWithSupabase()
+          return { error: null }
+        }
         return { error }
       } catch (e: any) {
         console.warn('Supabase sign in failed:', e)

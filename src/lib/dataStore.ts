@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Resource, Subject } from '@/types'
 import { INITIAL_RESOURCES, MOCK_SUBJECTS } from '@/data/mockData'
-import { getBookmarks, getDownloads } from '@/lib/bookmarks'
+import { getBookmarks, getDownloads, removeBookmark, removeDownload } from '@/lib/bookmarks'
 import { deleteNote, fetchNotes } from '@/lib/notesApi'
 import { isSupabaseConfigured } from '@/lib/supabase'
 import toast from 'react-hot-toast'
@@ -93,6 +93,8 @@ export async function removeNote(resourceId: string): Promise<void> {
   } else if (!deleteCustomUpload(resourceId)) {
     throw new Error('Note could not be found in local storage.')
   }
+  removeBookmark(resourceId)
+  removeDownload(resourceId)
   window.dispatchEvent(new Event('syncnote:resources_changed'))
 }
 

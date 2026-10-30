@@ -2,7 +2,14 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Download, Bookmark, BookmarkX, FileText, ExternalLink, HardDrive, BookOpen } from 'lucide-react'
 import { formatBytes, formatDate } from '@/lib/utils'
-import { getBookmarks, removeBookmark as removeBookmarkStorage, getDownloads, addDownload, removeDownload as removeDownloadStorage } from '@/lib/bookmarks'
+import {
+  getBookmarks,
+  removeBookmark as removeBookmarkStorage,
+  getDownloads,
+  addDownload,
+  removeDownload as removeDownloadStorage,
+  syncUserBookmarksWithSupabase,
+} from '@/lib/bookmarks'
 import toast from 'react-hot-toast'
 
 const TYPE_LABELS: Record<string, string> = {
@@ -28,9 +35,11 @@ export default function BookmarksDownloads() {
   const [activeTab, setActiveTab] = useState<'bookmarks' | 'all' | 'pyqs' | 'downloads'>('bookmarks')
   const [bookmarks, setBookmarks] = useState<string[]>(() => getBookmarks())
   const [downloads, setDownloads] = useState<string[]>(() => getDownloads())
-  const { resources: allResources } = useResources()
+  const { resources: allResources, loading } = useResources()
 
   useEffect(() => {
+    void syncUserBookmarksWithSupabase()
+
     function handleBookmarksChange() {
       setBookmarks(getBookmarks())
     }
@@ -217,14 +226,24 @@ export default function BookmarksDownloads() {
       </div>
 
       {/* Resource List */}
-      {displayResources.length === 0 ? (
+      {loading ? (
+        <div className="card p-12 text-center text-slate-400 max-w-md mx-auto my-6 border border-slate-100">
+          <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-3" />
+          <h3 className="font-semibold text-slate-700 text-sm">Loading saved materials…</h3>
+          <p className="text-xs text-slate-400 mt-1">Retrieving your bookmarked notes and downloads</p>
+        </div>
+      ) : displayResources.length === 0 ? (
         <div className="card p-12 text-center text-slate-400 max-w-md mx-auto my-6 border border-dashed border-slate-200">
           <div className="w-14 h-14 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-3">
             <Bookmark size={26} />
           </div>
-          <h3 className="font-bold text-slate-700 text-base">No Bookmarked Files</h3>
+          <h3 className="font-bold text-slate-700 text-base">
+            {activeTab === 'downloads' ? 'No Downloaded Files' : 'No Bookmarked Files'}
+          </h3>
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            You don't have any bookmarked files in this section yet. Browse semester notes or question papers and click the bookmark icon to save materials here.
+            {activeTab === 'downloads'
+              ? "You haven't downloaded any study materials yet. Browse semester notes or question papers to download materials to your device."
+              : "You don't have any bookmarked files in this section yet. Browse semester notes or question papers and click the bookmark icon to save materials here."}
           </p>
           <div className="flex gap-2 justify-center mt-5">
             <Link to="/semester-notes" className="btn btn-primary btn-sm flex items-center gap-1.5">
